@@ -681,3 +681,24 @@ procdump(void)
     printf("\n");
   }
 }
+
+
+uint64
+map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size){
+  uint64 a;
+  uint64 curr_va = src_va;
+  pte_t* pa;
+  uint64 oldsz = PGROUNDUP(dst_proc->sz);
+  uint64 newsz = PGROUNDUP(dst_proc->sz + size);
+
+  for(a = oldsz; a < newsz; a += PGSIZE){
+    pa = walk(src_proc->pagetable, curr_va, 0);
+    if(mappages(dst_proc->pagetable, a, PGSIZE, PTE2PA(*pa), PTE_FLAGS(*pa)|PTE_S) != 0){
+      uvmunmap(dst_proc->pagetable, oldsz, (newsz - oldsz), 0);
+      return 0;
+    }
+    curr_va += PGSIZE;
+  }
+  dst_proc->sz = newsz;
+  return oldsz;
+}
