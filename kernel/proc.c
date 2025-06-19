@@ -686,7 +686,7 @@ procdump(void)
 uint64
 map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size){
   uint64 a;
-  uint64 curr_va = src_va;
+  uint64 curr_va = PGROUNDDOWN(src_va);
   pte_t* pa;
   uint64 oldsz = PGROUNDUP(dst_proc->sz);
   uint64 newsz = PGROUNDUP(dst_proc->sz + size);
@@ -704,27 +704,26 @@ map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, ui
     curr_va += PGSIZE;
   }
   dst_proc->sz = newsz;
-  return oldsz;
+  return oldsz + (src_va - PGROUNDDOWN(src_va));
 }
+
 
 uint64
 unmap_shared_pages(struct proc* p, uint64 addr, uint64 size){
-  uint64 a;
-  pte_t* pte;
+  pte_t* pte = walk(p->pagetable, addr, 0);
 
   addr = PGROUNDDOWN(addr);
-  size = PGROUNDUP(size);
+  uint64 npages = size / PGSIZE + 1;
 
   if((*pte & PTE_V) == 0)
     panic("unmap_shared_pages: not mapped");  
   if(addr + size == p->sz)
     return -1; // unmapping beyond process size
 
-  uvmunmap(p->pagetable, addr, size, 1);
-  p->sz -= size;
+  uvmunmap(p->pagetable, addr, npages, 1);
+  p->sz -= PGROUNDUP(size);
   return 0;
 }
-
 
 struct proc*
 proc_by_pid(int pid) {

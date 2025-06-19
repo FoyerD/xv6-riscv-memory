@@ -99,18 +99,18 @@ sys_map_shared_pages(void)
 
   argint(0, &src_pid);
   argaddr(1, &src_va);
-  argint(2, &size);
+  argaddr(2, &size);
 
-  return map_shared_pages(proc_by_id(src_pid), myproc(), src_va, size);
+  return map_shared_pages(proc_by_pid(src_pid), myproc(), src_va, size);
 }
 
 uint64
 sys_unmap_shared_pages(void)
 {
   uint64 addr, size;
-  uint64 p;
+  struct proc* p;
   argaddr(0, &addr);
-  argint(1, (int *)&size);
+  argaddr(1, &size);
   p = myproc();
   return unmap_shared_pages(p, addr, size);
 }
