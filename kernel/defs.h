@@ -106,6 +106,9 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+// shared memory
+int             map_shared_pages(struct proc*, struct proc*, uint64, uint64);
+int             unmap_shared_pages(struct proc*, uint64, uint64);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

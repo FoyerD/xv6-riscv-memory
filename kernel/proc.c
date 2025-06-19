@@ -693,11 +693,7 @@ map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, ui
 
   for(a = oldsz; a < newsz; a += PGSIZE){
     pa = walk(src_proc->pagetable, curr_va, 0);
-    if(pa == 0){
-      uvmunmap(dst_proc->pagetable, oldsz, (newsz - oldsz), 0);
-      return 0;
-    }
-    if((*pa & PTE_V) == 0){
+    if(pa == 0 || (*pa & PTE_V) == 0){
       uvmunmap(dst_proc->pagetable, oldsz, (newsz - oldsz), 0);
       return 0;
     }
@@ -720,10 +716,11 @@ unmap_shared_pages(struct proc* p, uint64 addr, uint64 size){
   size = PGROUNDUP(size);
 
   if((*pte & PTE_V) == 0)
-    panic("unmap_shared_pages: not mapped");
-  if(PTE_FLAGS(*pte) == PTE_V || (PTE_FLAGS(*pte) & PTE_S) == 0)
-    return -1; // not a shared page  
-    
-  uvmunmap(p->pagetable, addr, size, 0);
-  return addr + size;
+    panic("unmap_shared_pages: not mapped");  
+  if(addr + size == p->sz)
+    return -1; // unmapping beyond process size
+
+  uvmunmap(p->pagetable, addr, size, 1);
+  p->sz -= size;
+  return 0;
 }
