@@ -95,13 +95,13 @@ uint64
 sys_map_shared_pages(void)
 {
   uint64 src_va, size;
-  uint64 src_proc;
+  int src_pid;
 
-  argaddr(0, &src_proc);
+  argint(0, &src_pid);
   argaddr(1, &src_va);
-  argint(2, (int *)&size);
+  argint(2, &size);
 
-  return map_shared_pages((struct proc*)src_proc, myproc(), src_va, size);
+  return map_shared_pages(proc_by_id(src_pid), myproc(), src_va, size);
 }
 
 uint64

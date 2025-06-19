@@ -40,3 +40,6 @@ int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
 
+// shared memory
+int map_shared_pages(int src_pid, uint64, uint64);
+int unmap_shared_pages(uint64, uint64);

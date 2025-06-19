@@ -724,3 +724,16 @@ unmap_shared_pages(struct proc* p, uint64 addr, uint64 size){
   p->sz -= size;
   return 0;
 }
+
+
+struct proc*
+proc_by_pid(int pid) {
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->pid == pid) {
+      return p;
+    }
+  }
+  return 0; // not found
+}
