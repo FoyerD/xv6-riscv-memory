@@ -35,6 +35,7 @@ int main(int argc, char** argv){
         return 0;
     }
     else {
+        //parent
         wait(&ret_val);
         if(ret_val != 0){
             printf("Child exited with error code %d\n", ret_val);
