@@ -1,8 +1,9 @@
 #include "kernel/types.h"
 #include "user/user.h"
 
-#define NUM_CHILDREN 100
-#define BUFFER_SIZE 4096 //PGSIZE
+#define NUM_CHILDREN 50
+#define BUFFER_SIZE 4096 // One page
+#define HEADER_ALIGNMENT 8
 
 struct msg_header {
     uint16 index;
@@ -13,101 +14,113 @@ int min(int a, int b) {
     return (a < b) ? a : b;
 }
 
-int main(int argc, char** argv){
-    // process managment
+uint64 align(uint64 addr) {
+    return (addr + HEADER_ALIGNMENT - 1) & ~(HEADER_ALIGNMENT - 1);
+}
+
+int main(int argc, char** argv) {
     uint64 p_pid = getpid();
-    uint64 c_pids[NUM_CHILDREN];
     int ret_val;
-    
-    // buffer related
+
     char* buffer = (char*)malloc(BUFFER_SIZE);
-    uint64 child_va = 0;
-    uint64 parent_va = 0;
-    
-    // child process related
-    struct msg_header child_header;
+    if (!buffer) {
+        printf("Parent: failed to allocate buffer\n");
+        return 1;
+    }
+
+    for (int i = 0; i < BUFFER_SIZE; i++) buffer[i] = 0;
+
     int child_index = 0;
-    int is_parent = 1;
-    
-    // general _helper
-    struct msg_header* curr_header;
-    char* child_msg;
+    uint64 buffer_va = 0;
 
+    for (child_index = 0; child_index < NUM_CHILDREN; child_index++) {
+        if (fork() == 0) {
+            // child
+            free(buffer);
+            struct msg_header hdr;
+            hdr.index = child_index + 1;
+            hdr.length = 100;
 
-    for(child_index = 0; child_index < NUM_CHILDREN; child_index++){
-        if((c_pids[child_index] = fork()) == 0){
-            // child initialization
-            free(buffer); // Free the buffer in the child process
-
-            child_header.index = child_index+1;
-            child_header.length = child_header.index;
-            child_msg = (char*)malloc(child_header.length + 1);
-            for(int i = 0; i < child_header.length; i++){
-                child_msg[i] = 'a' + (i) % 26; // fill with some data
+            char* msg_buf = malloc(hdr.length + 1);
+            for (int i = 0; i < hdr.length; i++) {
+                msg_buf[i] = 'a' + (i % 26);
             }
-            is_parent = 0;
-            parent_va = (uint64)buffer;
-            child_va = map_shared_pages(p_pid, parent_va, BUFFER_SIZE);
-            if(child_va == 0){
-                printf("Child %d failed to map shared pages.\n", child_index);
+            msg_buf[hdr.length] = '\0';
+
+            buffer_va = map_shared_pages(p_pid, (uint64)buffer, BUFFER_SIZE);
+            if (buffer_va == 0) {
+                printf("Child %d: failed to map shared page\n", child_index);
+                free(msg_buf);
                 return 1;
             }
+
+            int requested_total = align(sizeof(struct msg_header) + hdr.length);
+            uint64 offset = __sync_fetch_and_add((uint64*)buffer_va, requested_total);
+
+            uint64 buffer_end = BUFFER_SIZE - sizeof(uint64);
+            if (offset >= buffer_end) {
+                printf("Child %d: buffer already full\n", child_index);
+                free(msg_buf);
+                return 0;
+            }
+
+            uint64 space_left = buffer_end - offset;
+            uint16 max_msg_len = 0;
+
+            if (space_left >= sizeof(struct msg_header) + 1) {
+                max_msg_len = min(hdr.length, space_left - sizeof(struct msg_header));
+            } else {
+                printf("Child %d: not enough space even for header + 1 byte\n", child_index);
+                free(msg_buf);
+                return 0;
+            }
+
+            struct msg_header* entry = (struct msg_header*)(buffer_va + sizeof(uint64) + offset);
+
+            memmove((void*)entry + sizeof(struct msg_header), msg_buf, max_msg_len);
+            __sync_synchronize();
+
+            entry->length = max_msg_len;
+            entry->index = hdr.index;
+
+            free(msg_buf);
+            return 0;
+        }
+    }
+
+    // parent
+    struct msg_header* curr = (struct msg_header*)(buffer + sizeof(uint64));
+    int messages_read = 0;
+
+    while ((void*)curr < (void*)(buffer + BUFFER_SIZE) && messages_read < NUM_CHILDREN) {
+        if (curr->index == 0) {
+            sleep(1);
+            continue;
+        }
+        if (!((void*)curr < (void*)(buffer + BUFFER_SIZE) && messages_read < NUM_CHILDREN)){
+            printf("Parent: no more messages to read or all children have sent messages\n");
             break;
         }
-    }
-    
-    if(is_parent){
-        parent_va = (uint64)buffer;
 
-        curr_header = (struct msg_header*)buffer;
-        while((void*)curr_header < (void*)(buffer + BUFFER_SIZE)){
-            while(curr_header->length == 0){
-                sleep(1);
-            }
-            child_msg = (char*)malloc(curr_header->length + 1);
-            memmove(child_msg, (char*)curr_header + sizeof(struct msg_header), curr_header->length);
-            child_msg[curr_header->length] = '\0';
-            printf("Child %d sent: %s\n", curr_header->index, child_msg);
-            free(child_msg);
-            curr_header = (void*)curr_header + sizeof(struct msg_header) + curr_header->length;
-            curr_header = (struct msg_header*)(((uint64)curr_header + 7) & ~7);
+        wait(&ret_val);
+        void* data_ptr = (void*)curr + sizeof(struct msg_header);
+        void* next_header = (void*)curr + align(sizeof(struct msg_header) + curr->length);
+        if ((void*)next_header > (void*)(buffer + BUFFER_SIZE)) {
+            printf("Parent: message from child %d overflows buffer, stopping\n", curr->index);
+            break;
         }
-        if((void*)curr_header >= ((void*)buffer + BUFFER_SIZE)){
-            printf("Reached end of buffer! in padre\n");
-            return 1;
-        }
-        for(int i = 0; i < NUM_CHILDREN; i++){
-            wait(&ret_val);
-            if(ret_val != 0){
-                printf("Child %d exited with error code %d\n", i, ret_val);
-                return 1;
-            }
-        }
-        printf("All children have exited successfully.\n");
-        return 0;
+
+        char* recv_msg = malloc(curr->length + 1);
+        memmove(recv_msg, data_ptr, curr->length);
+        recv_msg[curr->length] = '\0';
+
+        printf("Child %d sent: %s\n", curr->index, recv_msg);
+        free(recv_msg);
+
+        curr = (struct msg_header*)align((uint64)next_header);
+        messages_read++;
     }
 
-    else{
-        // child logic
-        curr_header = (struct msg_header*)(((uint64)child_va + 7) & ~7);
-        int total_size = sizeof(struct msg_header) + child_header.length;
-        
-        while((void*)curr_header + sizeof(struct msg_header) < (void*)(child_va) + BUFFER_SIZE &&
-            __sync_val_compare_and_swap((uint64*)curr_header, 0, *(uint64*)&child_header) != 0){
-            curr_header = (void*)curr_header + total_size;
-            curr_header = (struct msg_header*)(((uint64)curr_header + 7) & ~7);
-            if(curr_header >= (struct msg_header*)(child_va + BUFFER_SIZE)){
-                printf("Buffer overflow detected! in hijo %d\n", child_index);
-                return 1;
-            }
-        }
-        
-        curr_header->index = child_header.index;
-        curr_header->length = child_header.length;
-        memmove((void*)curr_header + sizeof(struct msg_header),
-                child_msg,
-                min(child_header.length, BUFFER_SIZE - (curr_header + sizeof(struct msg_header) - (struct msg_header*)child_va)));
-        free(child_msg);
-        return 0;
-    }
+    printf("All children have exited successfully.\n");
+    return 0;
 }
